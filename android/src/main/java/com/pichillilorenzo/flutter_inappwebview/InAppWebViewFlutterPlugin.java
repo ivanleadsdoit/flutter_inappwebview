@@ -9,6 +9,7 @@ import android.webkit.ValueCallback;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.pichillilorenzo.flutter_inappwebview.webview.in_app_webview.InAppWebViewChromeClient;
 import com.pichillilorenzo.flutter_inappwebview.chrome_custom_tabs.ChromeSafariBrowserManager;
 import com.pichillilorenzo.flutter_inappwebview.credential_database.CredentialDatabaseHandler;
 import com.pichillilorenzo.flutter_inappwebview.in_app_browser.InAppBrowserManager;
@@ -184,6 +185,14 @@ public class InAppWebViewFlutterPlugin implements FlutterPlugin, ActivityAware {
   public void onAttachedToActivity(ActivityPluginBinding activityPluginBinding) {
     this.activityPluginBinding = activityPluginBinding;
     this.activity = activityPluginBinding.getActivity();
+
+    activityPluginBinding.addRequestPermissionsResultListener(new PluginRegistry.RequestPermissionsResultListener() {
+      @Override
+      public boolean onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+//        Log.v(TAG,"onRequestPermissionsResult");
+        return InAppWebViewChromeClient.requestPermissionsResult(requestCode, permissions, grantResults);
+      }
+    });
   }
 
   @Override

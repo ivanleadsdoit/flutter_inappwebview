@@ -3,6 +3,7 @@ package com.pichillilorenzo.flutter_inappwebview.webview.in_app_webview;
 import android.Manifest;
 import android.annotation.TargetApi;
 import android.app.Activity;
+import android.content.ClipData;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -42,7 +43,9 @@ import android.widget.RelativeLayout;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
+import androidx.annotation.Size;
 import androidx.appcompat.app.AlertDialog;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
 
@@ -60,6 +63,7 @@ import com.pichillilorenzo.flutter_inappwebview.types.JsPromptResponse;
 import com.pichillilorenzo.flutter_inappwebview.types.PermissionResponse;
 import com.pichillilorenzo.flutter_inappwebview.types.URLRequest;
 import com.pichillilorenzo.flutter_inappwebview.webview.WebViewChannelDelegate;
+import com.pichillilorenzo.flutter_inappwebview.webview.util.FileUtil;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -85,6 +89,17 @@ public class InAppWebViewChromeClient extends WebChromeClient implements PluginR
   final String DEFAULT_MIME_TYPES = "*/*";
   final Map<DialogInterface, JsResult> dialogs = new HashMap();
 
+  private static ValueCallback<Uri> uploadMessage;
+  private static ValueCallback<Uri[]> uploadMessageAboveL;
+
+  private final static int FILE_CHOOSER_RESULT_CODE = 10000;
+  public static final int RESULT_OK = -1;
+
+  private static final String[] perms = {Manifest.permission.CAMERA};
+  private static final int REQUEST_CAMERA = 1;
+
+  private static Uri cameraUri;
+
   protected static final FrameLayout.LayoutParams FULLSCREEN_LAYOUT_PARAMS = new FrameLayout.LayoutParams(
           ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER);
 
@@ -106,11 +121,11 @@ public class InAppWebViewChromeClient extends WebChromeClient implements PluginR
   @Nullable
   private View mCustomView;
   @Nullable
-  private WebChromeClient.CustomViewCallback mCustomViewCallback;
+  private CustomViewCallback mCustomViewCallback;
   private int mOriginalOrientation;
   private int mOriginalSystemUiVisibility;
   @Nullable
-  public InAppWebViewFlutterPlugin plugin;
+  public static InAppWebViewFlutterPlugin plugin;
   @Nullable
   public InAppWebView inAppWebView;
 
@@ -847,57 +862,211 @@ public class InAppWebViewChromeClient extends WebChromeClient implements PluginR
   @TargetApi(Build.VERSION_CODES.LOLLIPOP)
   @Override
   public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
-    String[] acceptTypes = fileChooserParams.getAcceptTypes();
-    boolean allowMultiple = fileChooserParams.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE;
-    boolean captureEnabled = fileChooserParams.isCaptureEnabled();
-    return startPickerIntent(filePathCallback, acceptTypes, allowMultiple, captureEnabled);
+    uploadMessageAboveL = filePathCallback;
+    takePhotoOrOpenGallery();
+    return true;
+  }
+
+  private void takePhotoOrOpenGallery() {
+    if (plugin.activity==null||!FileUtil.checkSDcard(plugin.activity)) {
+      return;
+    }
+    String[] selectPicTypeStr = {plugin.activity.getString(R.string.take_photo),
+            plugin.activity.getString(R.string.photo_library)};
+    new android.app.AlertDialog.Builder(plugin.activity, android.app.AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+            .setOnCancelListener(new ReOnCancelListener())
+            .setItems(selectPicTypeStr,
+                    new DialogInterface.OnClickListener() {
+                      @Override
+                      public void onClick(DialogInterface dialog, int which) {
+                        switch (which) {
+                          // 相机拍摄
+                          case 0:
+                            openCamera();
+                            break;
+                          // 手机相册
+                          case 1:
+                            openImageChooserActivity();
+                            break;
+                          default:
+                            break;
+                        }
+                      }
+                    }).show();
+  }
+
+  private static void openCamera() {
+    if (plugin.activity == null) {
+      Log.d(LOG_TAG, "there is no Activity to handle this Intent");
+      return;
+    }
+    if (hasPermissions(plugin.activity, perms)) {
+      try {
+        //创建File对象，用于存储拍照后的照片
+        File outputImage = FileUtil.createImageFile(plugin.activity);
+        if (outputImage.exists()) {
+          outputImage.delete();
+        }
+        outputImage.createNewFile();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+          cameraUri = FileProvider.getUriForFile(plugin.activity, plugin.activity.getPackageName() + ".fileprovider", outputImage);
+        } else {
+          Uri.fromFile(outputImage);
+        }
+        //启动相机程序
+        Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        intent.putExtra(MediaStore.EXTRA_OUTPUT, cameraUri);
+        plugin.activity.startActivityForResult(intent, REQUEST_CAMERA);
+      } catch (Exception e) {
+        Log.d(LOG_TAG, "catch error");
+        if (uploadMessageAboveL != null) {
+          uploadMessageAboveL.onReceiveValue(null);
+          uploadMessageAboveL = null;
+        }
+      }
+    } else {
+      Log.d(LOG_TAG, "Request permissions for webview to open camera");
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        ActivityCompat.requestPermissions(plugin.activity, perms, REQUEST_CAMERA);
+      }
+    }
+  }
+
+  private  void openImageChooserActivity() {
+    if (plugin.activity == null) {
+      return;
+    }
+    Intent intent1 = new Intent(Intent.ACTION_GET_CONTENT);
+    intent1.addCategory(Intent.CATEGORY_OPENABLE);
+    intent1.setType("*/*");
+
+    Intent chooser = new Intent(Intent.ACTION_CHOOSER);
+    chooser.putExtra(Intent.EXTRA_TITLE, plugin.activity.getString(R.string.select_picture));
+    chooser.putExtra(Intent.EXTRA_INTENT, intent1);
+    plugin.activity.startActivityForResult(chooser, FILE_CHOOSER_RESULT_CODE);
+  }
+
+  public static boolean hasPermissions(@NonNull Context context,
+                                       @Size(min = 1) @NonNull String... perms) {
+    // Always return true for SDK < M, let the system deal with the permissions
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+
+
+      // DANGER ZONE!!! Changing this will break the library.
+      return true;
+    }
+
+    // Null context may be passed if we have detected Low API (less than M) so getting
+    // to this point with a null context should not be possible.
+    if (context == null) {
+      throw new IllegalArgumentException("Can't check permissions for null context");
+    }
+
+    for (String perm : perms) {
+      if (ContextCompat.checkSelfPermission(context, perm)
+              != PackageManager.PERMISSION_GRANTED) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+
+
+  /**
+   * dialog监听类
+   */
+  private static class ReOnCancelListener implements DialogInterface.OnCancelListener {
+    @Override
+    public void onCancel(DialogInterface dialogInterface) {
+      if (uploadMessage != null) {
+        uploadMessage.onReceiveValue(null);
+        uploadMessage = null;
+      }
+
+      if (uploadMessageAboveL != null) {
+        uploadMessageAboveL.onReceiveValue(null);
+        uploadMessageAboveL = null;
+      }
+    }
   }
 
   @Override
   public boolean onActivityResult(int requestCode, int resultCode, Intent data) {
-    if (filePathCallback == null && filePathCallbackLegacy == null) {
-      return true;
+    if (null == uploadMessage && null == uploadMessageAboveL) {
+      return false;
+    }
+    Uri result = null;
+    if (requestCode == REQUEST_CAMERA && resultCode == RESULT_OK) {
+      result = cameraUri;
+    }
+    if (requestCode == FILE_CHOOSER_RESULT_CODE) {
+      result = data == null || resultCode != RESULT_OK ? null : data.getData();
+    }
+    if (uploadMessageAboveL != null) {
+      onActivityResultAboveL(requestCode, resultCode, data);
+    }
+    else if (uploadMessage != null && result != null) {
+      uploadMessage.onReceiveValue(result);
+      uploadMessage = null;
+    }
+    return false;
+  }
+
+  @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+  private void onActivityResultAboveL(int requestCode, int resultCode, Intent intent) {
+    if (requestCode != FILE_CHOOSER_RESULT_CODE && requestCode != REQUEST_CAMERA || uploadMessageAboveL == null) {
+      return;
+    }
+    Uri[] results = null;
+    if (requestCode == REQUEST_CAMERA && resultCode == RESULT_OK) {
+      results = new Uri[]{cameraUri};
     }
 
-    // based off of which button was pressed, we get an activity result and a file
-    // the camera activity doesn't properly return the filename* (I think?) so we use
-    // this filename instead
-    switch (requestCode) {
-      case PICKER:
-        Uri[] results = null;
-        if (resultCode == RESULT_OK) {
-          results = getSelectedFiles(data, resultCode);
+    if (requestCode == FILE_CHOOSER_RESULT_CODE && resultCode == Activity.RESULT_OK) {
+      if (intent != null) {
+        String dataString = intent.getDataString();
+        ClipData clipData = intent.getClipData();
+        if (clipData != null) {
+          results = new Uri[clipData.getItemCount()];
+          for (int i = 0; i < clipData.getItemCount(); i++) {
+            ClipData.Item item = clipData.getItemAt(i);
+            results[i] = item.getUri();
+          }
         }
-
-        if (filePathCallback != null) {
-          filePathCallback.onReceiveValue(results);
+        if (dataString != null) {
+          results = new Uri[]{Uri.parse(dataString)};
         }
-        break;
-
-      case PICKER_LEGACY:
-        Uri result = null;
-        if (resultCode == RESULT_OK) {
-          result = data != null ? data.getData() : getCapturedMediaFile();
-        }
-        if (filePathCallbackLegacy != null) {
-          filePathCallbackLegacy.onReceiveValue(result);
-        }
-        break;
+      }
     }
+    uploadMessageAboveL.onReceiveValue(results);
+    uploadMessageAboveL = null;
+  }
 
-    filePathCallback = null;
-    filePathCallbackLegacy = null;
-    imageOutputFileUri = null;
-    videoOutputFileUri = null;
-
-    return true;
+  public static boolean requestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+    if (requestCode == REQUEST_CAMERA) {
+      if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+        openCamera();
+      } else {
+        if (uploadMessage != null) {
+          uploadMessage.onReceiveValue(null);
+          uploadMessage = null;
+        }
+        if (uploadMessageAboveL != null) {
+          uploadMessageAboveL.onReceiveValue(null);
+          uploadMessageAboveL = null;
+        }
+      }
+    }
+    return false;
   }
 
   private Uri[] getSelectedFiles(Intent data, int resultCode) {
     // we have one file selected
     if (data != null && data.getData() != null) {
       if (resultCode == RESULT_OK && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-        return WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+        return FileChooserParams.parseResult(resultCode, data);
       } else {
         return null;
       }
