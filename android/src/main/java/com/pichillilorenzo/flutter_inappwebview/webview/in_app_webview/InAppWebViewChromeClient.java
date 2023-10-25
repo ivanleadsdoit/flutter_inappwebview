@@ -48,6 +48,7 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
+import android.webkit.WebViewClient;
 
 import com.pichillilorenzo.flutter_inappwebview.InAppWebViewFileProvider;
 import com.pichillilorenzo.flutter_inappwebview.R;
@@ -647,7 +648,7 @@ public class InAppWebViewChromeClient extends WebChromeClient implements PluginR
   }
 
   @Override
-  public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, final Message resultMsg) {
+  public boolean onCreateWindow(WebView view, final boolean isDialog, final boolean isUserGesture, final Message resultMsg) {
     int windowId = 0;
     if (plugin != null && plugin.inAppWebViewManager != null) {
       plugin.inAppWebViewManager.windowAutoincrementId++;
@@ -668,6 +669,65 @@ public class InAppWebViewChromeClient extends WebChromeClient implements PluginR
           url = imageUrl;
         }
       }
+    }
+
+    if(result.getType() == WebView.HitTestResult.UNKNOWN_TYPE) {
+      WebView targetWebView = new WebView(getActivity());
+      targetWebView.setWebViewClient(new WebViewClient(){
+        @Override
+        public boolean shouldOverrideUrlLoading (WebView view, String url) {
+          int windowId = 0;
+          if (plugin != null && plugin.inAppWebViewManager != null) {
+            plugin.inAppWebViewManager.windowAutoincrementId++;
+            windowId = plugin.inAppWebViewManager.windowAutoincrementId;
+          }
+          URLRequest request = new URLRequest(url, "GET", null, null);
+          CreateWindowAction createWindowAction = new CreateWindowAction(
+                  request,
+                  true,
+                  isUserGesture,
+                  false,
+                  windowId,
+                  isDialog
+          );
+
+          if (plugin != null && plugin.inAppWebViewManager != null) {
+            plugin.inAppWebViewManager.windowWebViewMessages.put(windowId, resultMsg);
+          }
+
+          if (inAppWebView != null && inAppWebView.channelDelegate != null) {
+            int finalWindowId = windowId;
+            inAppWebView.channelDelegate.onCreateWindow(createWindowAction, new WebViewChannelDelegate.CreateWindowCallback() {
+              @Override
+              public boolean nonNullSuccess(@NonNull Boolean handledByClient) {
+                return !handledByClient;
+              }
+
+              @Override
+              public void defaultBehaviour(@Nullable Boolean handledByClient) {
+                if (plugin != null && plugin.inAppWebViewManager != null) {
+                  plugin.inAppWebViewManager.windowWebViewMessages.remove(finalWindowId);
+                }
+              }
+
+              @Override
+              public void error(String errorCode, @Nullable String errorMessage, @Nullable Object errorDetails) {
+                Log.e(LOG_TAG, errorCode + ", " + ((errorMessage != null) ? errorMessage : ""));
+                defaultBehaviour(null);
+              }
+            });
+
+            return true;
+          }
+
+          return true;
+
+        }
+      });
+      WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+      transport.setWebView(targetWebView);
+      resultMsg.sendToTarget();
+      return true;
     }
 
     URLRequest request = new URLRequest(url, "GET", null, null);
