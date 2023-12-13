@@ -868,7 +868,14 @@ public class InAppWebViewChromeClient extends WebChromeClient implements PluginR
   }
 
   private void takePhotoOrOpenGallery() {
-    if (plugin.activity==null||!FileUtil.checkSDcard(plugin.activity)) {
+    if (plugin == null) {
+      return;
+    }
+    if (plugin.activity == null) {
+      return;
+    }
+
+    if (!FileUtil.checkSDcard(plugin.activity)) {
       return;
     }
     String[] selectPicTypeStr = {plugin.activity.getString(R.string.take_photo),
@@ -896,6 +903,9 @@ public class InAppWebViewChromeClient extends WebChromeClient implements PluginR
   }
 
   private static void openCamera() {
+    if (plugin == null) {
+      return;
+    }
     if (plugin.activity == null) {
       Log.d(LOG_TAG, "there is no Activity to handle this Intent");
       return;
@@ -933,6 +943,9 @@ public class InAppWebViewChromeClient extends WebChromeClient implements PluginR
   }
 
   private  void openImageChooserActivity() {
+    if (plugin == null) {
+      return;
+    }
     if (plugin.activity == null) {
       return;
     }
@@ -1488,18 +1501,9 @@ public class InAppWebViewChromeClient extends WebChromeClient implements PluginR
       dialog.getKey().dismiss();
     }
     dialogs.clear();
-    if (plugin != null && plugin.activityPluginBinding != null) {
-      plugin.activityPluginBinding.removeActivityResultListener(this);
-    }
     if (inAppBrowserDelegate != null) {
       inAppBrowserDelegate.getActivityResultListeners().clear();
       inAppBrowserDelegate = null;
     }
-    filePathCallbackLegacy = null;
-    filePathCallback = null;
-    videoOutputFileUri = null;
-    imageOutputFileUri = null;
-    inAppWebView = null;
-    plugin = null;
   }
 }
